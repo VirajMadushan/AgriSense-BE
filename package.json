@@ -15,5 +15,13 @@
     "url": "https://github.com/VirajMadushan/AgriSense-BE/issues"
   },
   "homepage": "https://github.com/VirajMadushan/AgriSense-BE#readme",
-  "description": ""
+  "keywords": [],
+  "description": "",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "body-parser": "^2.2.1",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3"
+  }
 }
