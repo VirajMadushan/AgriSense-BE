@@ -1,16 +1,9 @@
-const express = require("express");
-const cors = require("cors");
-const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const bodyParser = require("body-parser");
+const jwt = require("jsonwebtoken");
 
-const app = express();
-app.use(cors());
-app.use(bodyParser.json());
+const SECRET_KEY = "MYSECRET123";
 
-const SECRET_KEY = "MYSECRET123"; // Change for production
-
-// TEMP USERS (You can later replace with DB)
+// Temporary database
 const users = [
   {
     id: 1,
@@ -26,53 +19,28 @@ const users = [
   }
 ];
 
-// ----------------------
-// LOGIN API
-// ----------------------
-app.post("/api/auth/login", (req, res) => {
-  const { email, password } = req.body;
+class AuthService {
+  // LOGIN
+  login(email, password) {
+    const user = users.find(u => u.email === email);
+    if (!user) return { error: "User not found" };
 
-  const user = users.find(u => u.email === email);
+    const isMatch = bcrypt.compareSync(password, user.password);
+    if (!isMatch) return { error: "Invalid password" };
 
-  if (!user) {
-    return res.status(400).json({ message: "User not found" });
+    // Create JWT token
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      SECRET_KEY,
+      { expiresIn: "1h" }
+    );
+
+    return {
+      success: true,
+      token,
+      role: user.role
+    };
   }
+}
 
-  const isMatch = bcrypt.compareSync(password, user.password);
-  if (!isMatch) {
-    return res.status(400).json({ message: "Invalid password" });
-  }
-
-  const token = jwt.sign(
-    { id: user.id, email: user.email, role: user.role },
-    SECRET_KEY,
-    { expiresIn: "1h" }
-  );
-
-  res.json({
-    success: true,
-    token,
-    role: user.role
-  });
-});
-
-// ----------------------
-// VERIFY TOKEN (PROTECTED ROUTE)
-// ----------------------
-app.get("/api/protected", (req, res) => {
-  const token = req.headers["authorization"];
-
-  if (!token) return res.status(403).json({ message: "Token missing" });
-
-  try {
-    const decoded = jwt.verify(token, SECRET_KEY);
-    res.json({ message: "Valid token", user: decoded });
-  } catch (err) {
-    res.status(401).json({ message: "Invalid token" });
-  }
-});
-
-// ----------------------
-app.listen(4000, () => {
-  console.log("Backend running on http://localhost:4000");
-});
+module.exports = new AuthService();
