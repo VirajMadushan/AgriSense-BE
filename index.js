@@ -23,7 +23,8 @@ app.get("/", (req, res) => res.send("AgriSense BE running "));
 app.use("/api/auth", authRoutes);
 app.use("/api/me", meRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("api/users", usersRoutes);
+app.use("/api/users", usersRoutes);
+
 
 // Start server
 app.listen(process.env.PORT || 4000, () => {
