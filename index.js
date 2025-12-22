@@ -8,7 +8,7 @@ const authRoutes = require("./routes/auth.routes");
 const meRoutes = require("./routes/me.routes");
 const adminRoutes = require("./routes/admin.routes");
 const usersRoutes = require("./routes/users.routes"); 
-
+const deviceRoters = require("./routes/devices.routes");
 //  Create app FIRST
 const app = express();
 
@@ -24,7 +24,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/me", meRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/users", usersRoutes);
-
+app.use("/api/devices",deviceRoters);
 
 // Start server
 app.listen(process.env.PORT || 4000, () => {

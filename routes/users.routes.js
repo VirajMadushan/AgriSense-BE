@@ -4,6 +4,7 @@ const { requireAuth } = require("../middleware/auth.middleware");
 const { requireRole } = require("../middleware/role.middleware");
 
 const router = express.Router();
+router.get("/ping", (req, res) => res.send("USERS ROUTE WORKS ✅"));
 
 /**
  * ADMIN ONLY: Get all users
@@ -101,8 +102,8 @@ router.delete("/:id", requireAuth, requireRole("admin"), async (req, res) => {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "Invalid id" });
 
-    // Optional: prevent deleting yourself
-    // if (req.user.userId === id) return res.status(400).json({ message: "Cannot delete your own account" });
+    //  prevent deleting yourself
+    if (req.user.userId === id) return res.status(400).json({ message: "Cannot delete your own account" });
 
     await pool.query("DELETE FROM users WHERE id=?", [id]);
     res.json({ message: "User deleted" });
