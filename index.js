@@ -11,6 +11,11 @@ const usersRoutes = require("./routes/users.routes");
 const deviceRoters = require("./routes/devices.routes");
 const myDevicesRoutes = require("./routes/my-devices.routes");
 const deviceControlRoutes = require("./routes/device-control.routes");
+const dashboardRoutes = require("./routes/dashboard.routes");
+
+
+
+
 //  Create app FIRST
 const app = express();
 
@@ -29,6 +34,8 @@ app.use("/api/users", usersRoutes);
 app.use("/api/devices",deviceRoters);
 app.use("/api/my/devices", myDevicesRoutes);
 app.use("/api/device-control", deviceControlRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+
 // Start server
 app.listen(process.env.PORT || 4000, () => {
   console.log(`Server running on port ${process.env.PORT || 4000}`);

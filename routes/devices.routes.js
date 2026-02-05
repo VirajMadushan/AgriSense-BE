@@ -230,4 +230,96 @@ router.get("/:id/history", requireAuth, requireRole("admin"), async (req, res) =
   }
 });
 
+/**
+ * ADMIN: DEVICE REPORT (device + last history)
+ * GET /api/devices/:id/report
+ */
+router.get("/:id/report", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid id" });
+
+    // Device info
+    const [deviceRows] = await pool.query(
+      `SELECT d.id, d.device_name, d.device_type, d.status, d.location,
+              d.assigned_user_id, u.full_name AS assigned_user_name,
+              d.created_at, d.updated_at
+       FROM devices d
+       LEFT JOIN users u ON u.id = d.assigned_user_id
+       WHERE d.id = ?`,
+      [id]
+    );
+
+    if (!deviceRows.length) return res.status(404).json({ message: "Device not found" });
+    const device = deviceRows[0];
+
+    // Last 50 logs (you can change limit)
+    const [history] = await pool.query(
+      `SELECT dl.id, dl.action, dl.old_value, dl.new_value, dl.note, dl.created_at,
+              u.full_name AS created_by_name
+       FROM device_logs dl
+       LEFT JOIN users u ON u.id = dl.created_by
+       WHERE dl.device_id = ?
+       ORDER BY dl.id DESC
+       LIMIT 50`,
+      [id]
+    );
+
+    res.json({ device, history });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+// USER + ADMIN: Toggle device ON/OFF (only if assigned OR admin)
+router.post("/:id/toggle", requireAuth, async (req, res) => {
+  try {
+    const deviceId = Number(req.params.id);
+    const userId = req.user.userId;
+    const role = req.user.role;
+
+    const [rows] = await pool.query(
+      "SELECT id, status, assigned_user_id, device_name FROM devices WHERE id=?",
+      [deviceId]
+    );
+
+    if (!rows.length) return res.status(404).json({ message: "Device not found" });
+
+    const device = rows[0];
+
+    // user can toggle only own devices; admin can toggle any
+    if (role !== "admin" && Number(device.assigned_user_id) !== Number(userId)) {
+      return res.status(403).json({ message: "Not allowed to control this device" });
+    }
+
+    const current = (device.status || "OFF").toUpperCase();
+    const newStatus = current === "ON" ? "OFF" : "ON";
+
+    await pool.query(
+      "UPDATE devices SET status=?, updated_at=NOW() WHERE id=?",
+      [newStatus, deviceId]
+    );
+
+    // LOG the toggle action
+    await logDevice({
+      device_id: deviceId,
+      action: "USER_TOGGLE",
+      old_value: current,
+      new_value: newStatus,
+      note: role === "admin" ? "Admin toggled device" : "User toggled device",
+      created_by: userId
+    });
+
+    res.json({ message: "Device updated", status: newStatus });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
+
 module.exports = router;
