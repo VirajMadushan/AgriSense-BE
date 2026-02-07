@@ -40,3 +40,8 @@ app.use("/api/monitoring", monitoringRoutes);
 app.listen(process.env.PORT || 4000, () => {
   console.log(`Server running on port ${process.env.PORT || 4000}`);
 });
+
+
+if (process.env.DUMMY_SENSORS === "true") {
+  require("./dummy-sensors");
+}
