@@ -20,22 +20,36 @@ async function logDevice({ device_id, action, old_value, new_value, note, create
  *  ADMIN: GET ALL DEVICES
  *  GET /api/devices
  * ========================= */
-router.get("/", requireAuth, requireRole("admin"), async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT d.id, d.device_name, d.device_type, d.status, d.location,
-              d.assigned_user_id, u.full_name AS assigned_user_name,
-              d.created_at, d.updated_at
-       FROM devices d
-       LEFT JOIN users u ON u.id = d.assigned_user_id
-       ORDER BY d.id DESC`
-    );
+    const { userId, role } = req.user;
+
+    const sql =
+      role === "admin"
+        ? `SELECT d.id, d.device_name, d.device_type, d.status, d.location,
+                  d.assigned_user_id, u.full_name AS assigned_user_name,
+                  d.created_at, d.updated_at
+           FROM devices d
+           LEFT JOIN users u ON u.id = d.assigned_user_id
+           ORDER BY d.id DESC`
+        : `SELECT d.id, d.device_name, d.device_type, d.status, d.location,
+                  d.assigned_user_id, u.full_name AS assigned_user_name,
+                  d.created_at, d.updated_at
+           FROM devices d
+           LEFT JOIN users u ON u.id = d.assigned_user_id
+           WHERE d.assigned_user_id = ?
+           ORDER BY d.id DESC`;
+
+    const params = role === "admin" ? [] : [userId];
+
+    const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 /** =========================
  *  ADMIN: CREATE DEVICE
