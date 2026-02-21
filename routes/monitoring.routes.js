@@ -10,7 +10,15 @@ const router = express.Router();
  */
 router.get("/live", requireAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query(`
+    // adjust these depending on how you store user data in your JWT middleware
+    const role = req.user?.role;        // e.g. "admin"
+    const userId = req.user?.id;        // e.g. 1
+
+    const whereClause = role === "admin" ? "" : "WHERE d.assigned_user_id = ?";
+    const params = role === "admin" ? [] : [userId];
+
+    const [rows] = await pool.query(
+      `
       SELECT d.id AS device_id, d.device_name, d.device_type, d.status, d.location,
              r.temperature, r.humidity, r.soil_moisture, r.ph, r.light, r.created_at
       FROM devices d
@@ -23,8 +31,11 @@ router.get("/live", requireAuth, async (req, res) => {
           GROUP BY device_id
         ) last ON last.max_id = sr.id
       ) r ON r.device_id = d.id
+      ${whereClause}
       ORDER BY d.id DESC
-    `);
+    `,
+      params
+    );
 
     res.json(rows);
   } catch (err) {
@@ -34,20 +45,23 @@ router.get("/live", requireAuth, async (req, res) => {
 });
 
 /**
- * HISTORY: readings for one device (for charts)
+ * Device chart data (last 50)
  * GET /api/monitoring/device/:id
  */
 router.get("/device/:id", requireAuth, async (req, res) => {
   try {
     const deviceId = Number(req.params.id);
 
-    const [rows] = await pool.query(`
+    const [rows] = await pool.query(
+      `
       SELECT temperature, humidity, soil_moisture, ph, light, created_at
       FROM sensor_readings
       WHERE device_id=?
       ORDER BY id DESC
       LIMIT 50
-    `, [deviceId]);
+    `,
+      [deviceId]
+    );
 
     res.json(rows.reverse()); // oldest → newest for chart
   } catch (err) {
