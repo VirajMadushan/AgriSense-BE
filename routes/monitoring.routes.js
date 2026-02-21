@@ -11,8 +11,8 @@ const router = express.Router();
 router.get("/live", requireAuth, async (req, res) => {
   try {
     // adjust these depending on how you store user data in your JWT middleware
-    const role = req.user?.role;        // e.g. "admin"
-    const userId = req.user?.id;        // e.g. 1
+    const role = (req.user?.role || "").toLowerCase();       // e.g. "admin"
+    const userId = req.user?.userId;        // e.g. 1
 
     const whereClause = role === "admin" ? "" : "WHERE d.assigned_user_id = ?";
     const params = role === "admin" ? [] : [userId];
@@ -44,13 +44,24 @@ router.get("/live", requireAuth, async (req, res) => {
   }
 });
 
-/**
- * Device chart data (last 50)
- * GET /api/monitoring/device/:id
- */
+
+
 router.get("/device/:id", requireAuth, async (req, res) => {
   try {
     const deviceId = Number(req.params.id);
+    const role = (req.user?.role || "").toLowerCase();
+    const userId = req.user?.userId;
+
+    // if not admin, check device belongs to user
+    if (role !== "admin") {
+      const [check] = await pool.query(
+        "SELECT id FROM devices WHERE id=? AND assigned_user_id=?",
+        [deviceId, userId]
+      );
+      if (check.length === 0) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+    }
 
     const [rows] = await pool.query(
       `
@@ -59,11 +70,11 @@ router.get("/device/:id", requireAuth, async (req, res) => {
       WHERE device_id=?
       ORDER BY id DESC
       LIMIT 50
-    `,
+      `,
       [deviceId]
     );
 
-    res.json(rows.reverse()); // oldest → newest for chart
+    res.json(rows.reverse());
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
