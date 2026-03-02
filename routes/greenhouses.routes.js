@@ -9,7 +9,52 @@ function sectionCode(i) {
   return String.fromCharCode(65 + i);
 }
 
-// POST /api/greenhouses
+/**
+ * ✅ GET /api/greenhouses/with-sections
+ * Must be ABOVE "/:id" to avoid route conflict
+ */
+router.get("/with-sections", requireAuth, async (req, res) => {
+  try {
+    const role = (req.user?.role || "").toLowerCase();
+    const userId = req.user?.userId;
+
+    const where = role === "admin" ? "" : "WHERE g.assigned_user_id = ?";
+    const params = role === "admin" ? [] : [userId];
+
+    const [gh] = await pool.query(
+      `SELECT g.id, g.name, g.total_area_m2, g.section_count, g.assigned_user_id, g.created_at
+       FROM greenhouses g
+       ${where}
+       ORDER BY g.id DESC`,
+      params
+    );
+
+    const [sec] = await pool.query(
+      `SELECT id, greenhouse_id, section_code, area_m2
+       FROM greenhouse_sections
+       ORDER BY greenhouse_id DESC, section_code ASC`
+    );
+
+    const map = new Map();
+    gh.forEach((g) => map.set(g.id, { ...g, sections: [] }));
+
+    sec.forEach((s) => {
+      if (map.has(s.greenhouse_id)) {
+        map.get(s.greenhouse_id).sections.push(s);
+      }
+    });
+
+    res.json(Array.from(map.values()));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/**
+ * ✅ POST /api/greenhouses
+ * Create greenhouse and auto-create zones A..D (or more)
+ */
 router.post("/", requireAuth, async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -40,7 +85,7 @@ router.post("/", requireAuth, async (req, res) => {
 
     // create sections A.. (based on count)
     for (let i = 0; i < count; i++) {
-      const code = sectionCode(i); // A,B,C,D
+      const code = sectionCode(i); // A,B,C,D...
       await conn.query(
         `INSERT INTO greenhouse_sections (greenhouse_id, section_code, area_m2)
          VALUES (?, ?, ?)`,
@@ -67,7 +112,10 @@ router.post("/", requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/greenhouses (list mine; admin can see all if you want)
+/**
+ * ✅ GET /api/greenhouses
+ * List mine; admin can see all
+ */
 router.get("/", requireAuth, async (req, res) => {
   try {
     const role = (req.user?.role || "").toLowerCase();
@@ -88,7 +136,11 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
-/// GET /api/greenhouses/:id (details + sections + device counts)
+/**
+ * ✅ GET /api/greenhouses/:id
+ * Details + sections + device counts
+ * (keep LAST because it's dynamic)
+ */
 router.get("/:id", requireAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -118,42 +170,6 @@ router.get("/:id", requireAuth, async (req, res) => {
     );
 
     res.json({ greenhouse: gh[0], sections });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-// GET /api/greenhouses/with-sections
-router.get("/with-sections", requireAuth, async (req, res) => {
-  try {
-    const role = (req.user?.role || "").toLowerCase();
-    const userId = req.user?.userId;
-
-    const where = role === "admin" ? "" : "WHERE g.assigned_user_id = ?";
-    const params = role === "admin" ? [] : [userId];
-
-    const [gh] = await pool.query(
-      `SELECT g.id, g.name, g.total_area_m2, g.section_count
-       FROM greenhouses g
-       ${where}
-       ORDER BY g.id DESC`,
-      params
-    );
-
-    const [sec] = await pool.query(
-      `SELECT id, greenhouse_id, section_code, area_m2
-       FROM greenhouse_sections
-       ORDER BY greenhouse_id DESC, section_code ASC`
-    );
-
-    const map = new Map();
-    gh.forEach(g => map.set(g.id, { ...g, sections: [] }));
-    sec.forEach(s => {
-      if (map.has(s.greenhouse_id)) map.get(s.greenhouse_id).sections.push(s);
-    });
-
-    res.json(Array.from(map.values()));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
