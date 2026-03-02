@@ -13,6 +13,7 @@ const myDevicesRoutes = require("./routes/my-devices.routes");
 const deviceControlRoutes = require("./routes/device-control.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
 const monitoringRoutes = require("./routes/monitoring.routes");
+const greenhouseRoutes = require("./routes/greenhouses.routes");
 
 
 
@@ -36,6 +37,8 @@ app.use("/api/my/devices", myDevicesRoutes);
 app.use("/api/device-control", deviceControlRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/monitoring", monitoringRoutes);
+app.use("/api/greenhouses", greenhouseRoutes);
+
 // Start server
 app.listen(process.env.PORT || 4000, () => {
   console.log(`Server running on port ${process.env.PORT || 4000}`);

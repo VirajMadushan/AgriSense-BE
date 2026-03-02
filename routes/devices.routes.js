@@ -333,6 +333,49 @@ router.post("/:id/toggle", requireAuth, async (req, res) => {
   }
 });
 
+/** =========================
+ *  ADMIN: ASSIGN DEVICE TO SECTION
+ *  PATCH /api/devices/:id/assign
+ * ========================= */
+router.patch("/:id/assign", requireAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const deviceId = Number(req.params.id);
+    const { greenhouse_id, section_id } = req.body;
+
+    if (!deviceId) return res.status(400).json({ message: "Invalid device id" });
+
+    // Check device exists
+    const [oldRows] = await pool.query(
+      "SELECT * FROM devices WHERE id=?",
+      [deviceId]
+    );
+    if (!oldRows.length) return res.status(404).json({ message: "Device not found" });
+
+    const old = oldRows[0];
+
+    // Update device
+    await pool.query(
+      "UPDATE devices SET greenhouse_id=?, section_id=? WHERE id=?",
+      [greenhouse_id || null, section_id || null, deviceId]
+    );
+
+    // Log assignment
+    await logDevice({
+      device_id: deviceId,
+      action: "SECTION_ASSIGN",
+      old_value: old.section_id ? String(old.section_id) : "Unassigned",
+      new_value: section_id ? String(section_id) : "Unassigned",
+      note: `Assigned to greenhouse ${greenhouse_id || "None"}`,
+      created_by: req.user?.userId
+    });
+
+    res.json({ message: "Device assigned to section successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 
 
 
