@@ -9,7 +9,7 @@ app.use(cors({ origin: "http://localhost:4200" }));
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
-
+app.use("/api/analytics", require("./routes/analytics.routes"));
 app.get("/", (req, res) => res.send("AgriSense backend running"));
 
 app.listen(process.env.PORT || 4000, () => {

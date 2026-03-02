@@ -69,7 +69,6 @@ router.post("/", requireAuth, async (req, res) => {
 
     await conn.beginTransaction();
 
-    // who created it (your JWT has userId)
     const assigned_user_id = req.user?.userId || null;
 
     const [ghRes] = await conn.query(
@@ -80,12 +79,10 @@ router.post("/", requireAuth, async (req, res) => {
 
     const greenhouseId = ghRes.insertId;
 
-    // area per section
     const per = Number((total / count).toFixed(2));
 
-    // create sections A.. (based on count)
     for (let i = 0; i < count; i++) {
-      const code = sectionCode(i); // A,B,C,D...
+      const code = sectionCode(i);
       await conn.query(
         `INSERT INTO greenhouse_sections (greenhouse_id, section_code, area_m2)
          VALUES (?, ?, ?)`,
@@ -95,7 +92,6 @@ router.post("/", requireAuth, async (req, res) => {
 
     await conn.commit();
 
-    // return greenhouse + sections
     const [ghRows] = await pool.query(`SELECT * FROM greenhouses WHERE id=?`, [greenhouseId]);
     const [secRows] = await pool.query(
       `SELECT * FROM greenhouse_sections WHERE greenhouse_id=? ORDER BY id ASC`,
@@ -137,7 +133,131 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 /**
- * ✅ GET /api/greenhouses/:id
+ * ✅ PUT /api/greenhouses/:id
+ * Edit greenhouse + recreate sections
+ */
+router.put("/:id", requireAuth, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const id = Number(req.params.id);
+    const { name, total_area_m2, section_count = 4 } = req.body;
+
+    if (!id) return res.status(400).json({ message: "Invalid id" });
+    if (!name || !total_area_m2) {
+      return res.status(400).json({ message: "name and total_area_m2 are required" });
+    }
+
+    const role = (req.user?.role || "").toLowerCase();
+    const userId = req.user?.userId;
+
+    const [oldRows] = await conn.query(`SELECT * FROM greenhouses WHERE id=?`, [id]);
+    if (!oldRows.length) return res.status(404).json({ message: "Not found" });
+
+    const old = oldRows[0];
+
+    // only admin or owner
+    if (role !== "admin" && Number(old.assigned_user_id) !== Number(userId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const total = Number(total_area_m2);
+    const count = Math.max(1, Number(section_count || 4));
+    const per = Number((total / count).toFixed(2));
+
+    await conn.beginTransaction();
+
+    await conn.query(
+      `UPDATE greenhouses
+       SET name=?, total_area_m2=?, section_count=?
+       WHERE id=?`,
+      [name, total, count, id]
+    );
+
+    // Unassign all devices from old zones (safe)
+    await conn.query(
+      `UPDATE devices SET section_id=NULL WHERE greenhouse_id=?`,
+      [id]
+    );
+
+    // Recreate sections
+    await conn.query(`DELETE FROM greenhouse_sections WHERE greenhouse_id=?`, [id]);
+
+    for (let i = 0; i < count; i++) {
+      const code = sectionCode(i);
+      await conn.query(
+        `INSERT INTO greenhouse_sections (greenhouse_id, section_code, area_m2)
+         VALUES (?, ?, ?)`,
+        [id, code, per]
+      );
+    }
+
+    await conn.commit();
+
+    const [ghRows] = await pool.query(`SELECT * FROM greenhouses WHERE id=?`, [id]);
+    const [secRows] = await pool.query(
+      `SELECT * FROM greenhouse_sections WHERE greenhouse_id=? ORDER BY id ASC`,
+      [id]
+    );
+
+    res.json({ greenhouse: ghRows[0], sections: secRows });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * ✅ DELETE /api/greenhouses/:id
+ * Delete greenhouse + sections
+ */
+router.delete("/:id", requireAuth, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid id" });
+
+    const role = (req.user?.role || "").toLowerCase();
+    const userId = req.user?.userId;
+
+    const [rows] = await conn.query(`SELECT * FROM greenhouses WHERE id=?`, [id]);
+    if (!rows.length) return res.status(404).json({ message: "Not found" });
+
+    const gh = rows[0];
+
+    // only admin or owner
+    if (role !== "admin" && Number(gh.assigned_user_id) !== Number(userId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    await conn.beginTransaction();
+
+    // Unassign devices first (avoid FK errors)
+    await conn.query(
+      `UPDATE devices
+       SET greenhouse_id=NULL, section_id=NULL
+       WHERE greenhouse_id=?`,
+      [id]
+    );
+
+    await conn.query(`DELETE FROM greenhouse_sections WHERE greenhouse_id=?`, [id]);
+    await conn.query(`DELETE FROM greenhouses WHERE id=?`, [id]);
+
+    await conn.commit();
+    res.json({ message: "Greenhouse deleted" });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * GET /api/greenhouses/:id
  * Details + sections + device counts
  * (keep LAST because it's dynamic)
  */
@@ -146,11 +266,9 @@ router.get("/:id", requireAuth, async (req, res) => {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "Invalid id" });
 
-    // greenhouse
     const [gh] = await pool.query(`SELECT * FROM greenhouses WHERE id=?`, [id]);
     if (!gh.length) return res.status(404).json({ message: "Not found" });
 
-    // sections + device counts
     const [sections] = await pool.query(
       `
       SELECT 
