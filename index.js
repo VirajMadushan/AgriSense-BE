@@ -14,7 +14,7 @@ const deviceControlRoutes = require("./routes/device-control.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
 const monitoringRoutes = require("./routes/monitoring.routes");
 const greenhouseRoutes = require("./routes/greenhouses.routes");
-
+const analyticsRoutes = require("./routes/analytics.routes");
 
 
 //  Create app FIRST
