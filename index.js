@@ -38,6 +38,7 @@ app.use("/api/device-control", deviceControlRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/monitoring", monitoringRoutes);
 app.use("/api/greenhouses", greenhouseRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 // Start server
 app.listen(process.env.PORT || 4000, () => {

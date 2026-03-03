@@ -6,21 +6,26 @@ const router = express.Router();
 
 // ---- thresholds (simple version) ----
 const TH = {
-  HIGH_TEMP: 35,      // °C
-  LOW_HUM: 40,        // %
-  LOW_SOIL: 30,       // %
-  STALE_MIN: 15       // minutes (no readings)
+  HIGH_TEMP: 35, // °C
+  LOW_HUM: 40,   // %
+  LOW_SOIL: 30,  // %
+  STALE_MIN: 15  // minutes (no readings)
 };
 
-// avoid duplicate spam: don't insert same alert_type for same device within X minutes
+// ===========================
+// HELPERS
+// ===========================
 async function recentlyCreated(alert_type, device_id, minutes = 30) {
   const [rows] = await pool.query(
     `
     SELECT id
     FROM alerts
-    WHERE resolved=0
-      AND alert_type=?
-      AND ( (device_id IS NULL AND ? IS NULL) OR device_id=? )
+    WHERE resolved = 0
+      AND alert_type = ?
+      AND (
+        (device_id IS NULL AND ? IS NULL)
+        OR device_id = ?
+      )
       AND created_at >= NOW() - INTERVAL ? MINUTE
     LIMIT 1
     `,
@@ -29,28 +34,43 @@ async function recentlyCreated(alert_type, device_id, minutes = 30) {
   return rows.length > 0;
 }
 
-async function createAlert({ alert_type, severity, message, device_id = null, greenhouse_id = null, section_id = null }) {
-  // don't spam duplicates
+async function createAlert({
+  alert_type,
+  severity,
+  message,
+  device_id = null,
+  greenhouse_id = null,
+  section_id = null
+}) {
+  // avoid duplicate spam (same alert for same device in last 30 minutes)
   const dup = await recentlyCreated(alert_type, device_id, 30);
-  if (dup) return;
+  if (dup) return false;
 
   await pool.query(
     `INSERT INTO alerts (alert_type, severity, message, device_id, greenhouse_id, section_id)
      VALUES (?,?,?,?,?,?)`,
     [alert_type, severity, message, device_id, greenhouse_id, section_id]
   );
+
+  return true;
 }
 
 /**
+ * ===========================
  * GET /api/analytics/summary
- * Averages for last 24 hours (filtered for user if not admin)
+ * Averages for last 24 hours
+ * - Admin: all devices
+ * - User: only assigned devices
+ * ===========================
  */
 router.get("/summary", requireAuth, async (req, res) => {
   try {
     const role = (req.user?.role || "").toLowerCase();
     const userId = req.user?.userId;
 
-    const deviceWhere = role === "admin" ? "" : "AND d.assigned_user_id = ?";
+    // ✅ safe filter: admin sees all, user sees only assigned
+    const whereRole = role === "admin" ? "1=1" : "d.assigned_user_id = ?";
+
     const params = role === "admin" ? [] : [userId];
 
     const [[avg]] = await pool.query(
@@ -61,9 +81,9 @@ router.get("/summary", requireAuth, async (req, res) => {
         ROUND(AVG(sr.soil_moisture), 2) AS avgSoil,
         COUNT(*) AS readingsCount
       FROM sensor_readings sr
-      INNER JOIN devices d ON d.id = sr.device_id
+      LEFT JOIN devices d ON d.id = sr.device_id
       WHERE sr.created_at >= NOW() - INTERVAL 24 HOUR
-      ${deviceWhere}
+        AND ${whereRole}
       `,
       params
     );
@@ -72,9 +92,8 @@ router.get("/summary", requireAuth, async (req, res) => {
       `
       SELECT MAX(sr.created_at) AS lastReadingAt
       FROM sensor_readings sr
-      INNER JOIN devices d ON d.id = sr.device_id
-      WHERE 1=1
-      ${role === "admin" ? "" : "AND d.assigned_user_id = ?"}
+      LEFT JOIN devices d ON d.id = sr.device_id
+      WHERE ${whereRole}
       `,
       params
     );
@@ -93,8 +112,12 @@ router.get("/summary", requireAuth, async (req, res) => {
 });
 
 /**
+ * ===========================
  * POST /api/analytics/run
- * Generate alerts based on LAST reading per device (simple + accurate)
+ * Generate alerts based on LAST reading per device
+ * - Admin: scans all devices
+ * - User: scans only assigned devices
+ * ===========================
  */
 router.post("/run", requireAuth, async (req, res) => {
   try {
@@ -104,7 +127,6 @@ router.post("/run", requireAuth, async (req, res) => {
     const whereClause = role === "admin" ? "" : "WHERE d.assigned_user_id = ?";
     const params = role === "admin" ? [] : [userId];
 
-    // last reading per device
     const [rows] = await pool.query(
       `
       SELECT 
@@ -132,16 +154,16 @@ router.post("/run", requireAuth, async (req, res) => {
       params
     );
 
-    let created = 0;
+    let createdCount = 0;
 
     for (const it of rows) {
       const t = it.temperature;
       const h = it.humidity;
       const s = it.soil_moisture;
 
-      // stale/no data
+      // NO DATA
       if (!it.created_at) {
-        await createAlert({
+        const didCreate = await createAlert({
           alert_type: "NO_DATA",
           severity: "HIGH",
           message: `No sensor readings received for device "${it.device_name}".`,
@@ -149,28 +171,30 @@ router.post("/run", requireAuth, async (req, res) => {
           greenhouse_id: it.greenhouse_id,
           section_id: it.section_id
         });
-        created++;
+        if (didCreate) createdCount++;
         continue;
-      } else {
-        const last = new Date(it.created_at).getTime();
-        const now = Date.now();
-        const diffMin = (now - last) / 60000;
-
-        if (diffMin > TH.STALE_MIN) {
-          await createAlert({
-            alert_type: "STALE_DATA",
-            severity: "MEDIUM",
-            message: `Last reading is ${Math.floor(diffMin)} min old for "${it.device_name}".`,
-            device_id: it.device_id,
-            greenhouse_id: it.greenhouse_id,
-            section_id: it.section_id
-          });
-          created++;
-        }
       }
 
+      // STALE DATA
+      const last = new Date(it.created_at).getTime();
+      const now = Date.now();
+      const diffMin = (now - last) / 60000;
+
+      if (diffMin > TH.STALE_MIN) {
+        const didCreate = await createAlert({
+          alert_type: "STALE_DATA",
+          severity: "MEDIUM",
+          message: `Last reading is ${Math.floor(diffMin)} min old for "${it.device_name}".`,
+          device_id: it.device_id,
+          greenhouse_id: it.greenhouse_id,
+          section_id: it.section_id
+        });
+        if (didCreate) createdCount++;
+      }
+
+      // HIGH TEMP
       if (typeof t === "number" && t > TH.HIGH_TEMP) {
-        await createAlert({
+        const didCreate = await createAlert({
           alert_type: "HIGH_TEMP",
           severity: "HIGH",
           message: `High temperature ${t}°C detected on "${it.device_name}".`,
@@ -178,11 +202,12 @@ router.post("/run", requireAuth, async (req, res) => {
           greenhouse_id: it.greenhouse_id,
           section_id: it.section_id
         });
-        created++;
+        if (didCreate) createdCount++;
       }
 
+      // LOW HUMIDITY
       if (typeof h === "number" && h < TH.LOW_HUM) {
-        await createAlert({
+        const didCreate = await createAlert({
           alert_type: "LOW_HUMIDITY",
           severity: "MEDIUM",
           message: `Low humidity ${h}% detected on "${it.device_name}".`,
@@ -190,11 +215,12 @@ router.post("/run", requireAuth, async (req, res) => {
           greenhouse_id: it.greenhouse_id,
           section_id: it.section_id
         });
-        created++;
+        if (didCreate) createdCount++;
       }
 
+      // LOW SOIL
       if (typeof s === "number" && s < TH.LOW_SOIL) {
-        await createAlert({
+        const didCreate = await createAlert({
           alert_type: "LOW_SOIL",
           severity: "HIGH",
           message: `Low soil moisture ${s}% detected on "${it.device_name}".`,
@@ -202,11 +228,15 @@ router.post("/run", requireAuth, async (req, res) => {
           greenhouse_id: it.greenhouse_id,
           section_id: it.section_id
         });
-        created++;
+        if (didCreate) createdCount++;
       }
     }
 
-    res.json({ message: "Alerts generated", scannedDevices: rows.length });
+    res.json({
+      message: "Alerts generated",
+      scannedDevices: rows.length,
+      createdAlerts: createdCount
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Run analytics failed" });
@@ -214,17 +244,22 @@ router.post("/run", requireAuth, async (req, res) => {
 });
 
 /**
+ * ===========================
  * GET /api/analytics/alerts
- * Active alerts (admin sees all, user sees only their devices)
+ * Active alerts (resolved=0)
+ * - Admin: all alerts
+ * - User: alerts only for their assigned devices
+ * ===========================
  */
 router.get("/alerts", requireAuth, async (req, res) => {
   try {
     const role = (req.user?.role || "").toLowerCase();
     const userId = req.user?.userId;
 
-    const where = role === "admin"
-      ? ""
-      : `AND (a.device_id IN (SELECT id FROM devices WHERE assigned_user_id=?))`;
+    const where =
+      role === "admin"
+        ? ""
+        : `AND a.device_id IN (SELECT id FROM devices WHERE assigned_user_id=?)`;
 
     const params = role === "admin" ? [] : [userId];
 
@@ -232,10 +267,10 @@ router.get("/alerts", requireAuth, async (req, res) => {
       `
       SELECT a.*
       FROM alerts a
-      WHERE a.resolved=0
+      WHERE a.resolved = 0
       ${where}
       ORDER BY a.id DESC
-      LIMIT 30
+      LIMIT 50
       `,
       params
     );
@@ -244,6 +279,29 @@ router.get("/alerts", requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Error loading alerts" });
+  }
+});
+
+/**
+ * ===========================
+ * PATCH /api/analytics/alerts/:id/resolve
+ * Resolve an alert
+ * ===========================
+ */
+router.patch("/alerts/:id/resolve", requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid alert id" });
+
+    await pool.query(
+      `UPDATE alerts SET resolved=1 WHERE id=?`,
+      [id]
+    );
+
+    res.json({ message: "Alert resolved" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Resolve failed" });
   }
 });
 
